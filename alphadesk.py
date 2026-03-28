@@ -27,12 +27,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-try:
-    import plotly.graph_objects as go
-    PLOTLY_AVAILABLE = True
-except ImportError:
-    PLOTLY_AVAILABLE = False
-    go = None
+import plotly.graph_objects as go
 
 try:
     import MetaTrader5 as mt5
