@@ -26,7 +26,13 @@ from typing import Optional
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+
+try:
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    go = None
 
 try:
     import MetaTrader5 as mt5
@@ -51,6 +57,79 @@ try:
     SCHED_AVAILABLE = True
 except ImportError:
     SCHED_AVAILABLE = False
+
+try:
+    import anthropic as _anthropic_sdk
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+
+import json
+import re
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AI STRATEGY PARSER
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PATTERN_NAMES = list([
+    "Inside Bar Breakout (Both)", "Inside Bar Breakout (Bull)",
+    "Inside Bar Breakout (Bear)", "Engulfing (Both)",
+    "Bullish Engulfing Only", "Bearish Engulfing Only",
+    "Pin Bar Reversal (Both)", "Pin Bar Reversal (Bull)",
+    "Pin Bar Reversal (Bear)", "EMA Crossover",
+    "RSI Mean Reversion", "Bollinger Band Breakout", "MACD Trend",
+])
+
+_AI_SYSTEM = """You are an expert algorithmic trading strategy parser.
+
+The user will give you a trading strategy description in plain English (or pasted from a PDF/image).
+Your job is to extract the strategy parameters and return ONLY a valid JSON object — no explanation, no markdown, no code fences.
+
+Return exactly this JSON shape (use null for anything not mentioned):
+{
+  "symbol": string,           // e.g. "GBPJPY=X", "EURUSD=X", "GC=F" (gold), "BTC-USD"
+  "pattern": string,          // one of: """ + ", ".join(f'"{p}"' for p in _PATTERN_NAMES) + """,
+  "direction": string,        // "Both", "Long Only", or "Short Only"
+  "sl_pips": integer,         // stop loss in pips (e.g. 300)
+  "tp_pips": integer | null,  // take profit in pips, null if not specified or if exit is rule-based
+  "trailing_stop": boolean,   // true if trailing stop mentioned
+  "trailing_pips": integer,   // trailing distance in pips (default 100 if trailing but no value given)
+  "risk_pct": number,         // risk per trade as decimal (e.g. 0.01 for 1%), default 0.01
+  "timeframe": string,        // "1d" or "1wk"
+  "period": string,           // yfinance period: "1y", "2y", "3y", "5y"
+  "notes": string             // any special exit rules or conditions not covered above
+}
+
+Rules:
+- "Inside Day" means "Inside Bar" — map to "Inside Bar Breakout (Both)" if both long and short are mentioned
+- "Go long if closed > day prior to inside day" = bullish breakout
+- "Go short if closed < day prior to inside day" = bearish breakout  
+- If both long and short → direction "Both", pattern "Inside Bar Breakout (Both)"
+- "Stop and reverse" = when SL is hit, flip direction (note in notes field)
+- "1st profitable close exit" = no fixed TP, note in notes field, set tp_pips to null
+- If a symbol like GBP/JPY is mentioned, use "GBPJPY=X"
+- If risk % not mentioned, default to 0.01 (1%)
+- If timeframe not mentioned, default to "1d"
+- If period not mentioned, default to "2y"
+"""
+
+def parse_strategy_ai(text: str, api_key: str) -> dict:
+    """
+    Send strategy text to Claude API.
+    Returns parsed dict or raises on failure.
+    """
+    client = _anthropic_sdk.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=512,
+        system=_AI_SYSTEM,
+        messages=[{"role": "user", "content": text}],
+    )
+    raw = msg.content[0].text.strip()
+    # Strip any accidental markdown fences
+    raw = re.sub(r"```[a-z]*\n?", "", raw).strip()
+    return json.loads(raw)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -757,6 +836,8 @@ _DEFAULTS = {
     "scheduler_on":      False,
     "interval_min":      5,
     "approved_strategy": None,
+    "ai_parsed":         None,   # last AI-parsed strategy config
+    "anthropic_api_key": "",
     "risk_config": {
         "max_risk_pct":    0.01,
         "max_drawdown":    0.10,
@@ -975,16 +1056,143 @@ elif page == "📈 Backtest":
         st.error("yfinance not installed. Run: `pip install yfinance`")
         st.stop()
 
+    # ── AI STRATEGY PARSER ────────────────────────────────────────────────
+    st.markdown("""
+<div style="background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+            border:1px solid #00d4aa44; border-radius:10px; padding:18px 20px 14px;">
+  <span style="font-size:20px">🤖</span>
+  <span style="font-family:'IBM Plex Mono',monospace; font-size:15px;
+               color:#00d4aa; font-weight:600; margin-left:8px;">AI Strategy Parser</span>
+  <p style="color:#8b949e; font-size:12px; margin:6px 0 0;">
+    Paste any strategy description — screenshot text, PDF excerpt, hand-written rules —
+    and AI will extract all parameters and fill the form automatically.
+  </p>
+</div>
+""", unsafe_allow_html=True)
+
+    st.write("")
+
+    # API key (stored in session, not persisted to disk)
+    with st.expander("🔑 Anthropic API Key  (required for AI parsing)", expanded=not st.session_state.anthropic_api_key):
+        _key_input = st.text_input(
+            "Paste your Anthropic API key",
+            value=st.session_state.anthropic_api_key,
+            type="password",
+            help="Get one free at console.anthropic.com — key stays in memory only, never saved.",
+        )
+        if _key_input != st.session_state.anthropic_api_key:
+            st.session_state.anthropic_api_key = _key_input
+        if st.session_state.anthropic_api_key:
+            st.success("✅ API key set")
+
+    _ai_col1, _ai_col2 = st.columns([3, 1])
+    with _ai_col1:
+        _strategy_text = st.text_area(
+            "Paste strategy description here",
+            height=140,
+            placeholder=(
+                "Example:\n"
+                "GBP/JPY INSIDE DAY\n"
+                "LONG AND SHORT\n"
+                "YESTERDAY WAS AN INSIDE DAY\n"
+                "GO LONG IF TODAY CLOSED > DAY PRIOR TO INSIDE DAY\n"
+                "GO SHORT IF TODAY CLOSED < DAY PRIOR TO INSIDE DAY\n"
+                "300 PIP STOP LOSS\n"
+                "1ST PROFITABLE CLOSE EXIT OR STOP AND REVERSE"
+            ),
+        )
+
+    with _ai_col2:
+        st.write("")
+        st.write("")
+        st.write("")
+        _do_parse = st.button(
+            "🤖 Parse with AI",
+            type="primary",
+            use_container_width=True,
+            disabled=not (st.session_state.anthropic_api_key and _strategy_text.strip()),
+        )
+        if not st.session_state.anthropic_api_key:
+            st.caption("⬆️ Add API key first")
+        elif not _strategy_text.strip():
+            st.caption("⬆️ Paste strategy text")
+
+    # Run AI parse
+    if _do_parse and _strategy_text.strip():
+        if not ANTHROPIC_AVAILABLE:
+            st.error("anthropic SDK not installed. Run: `pip install anthropic`")
+        else:
+            with st.spinner("🤖 Reading strategy with Claude AI..."):
+                try:
+                    _parsed = parse_strategy_ai(
+                        _strategy_text, st.session_state.anthropic_api_key
+                    )
+                    st.session_state.ai_parsed = _parsed
+                    st.success("✅ Strategy parsed! Form has been filled automatically.")
+                except json.JSONDecodeError as _je:
+                    st.error(f"AI returned invalid JSON: {_je}")
+                    st.session_state.ai_parsed = None
+                except Exception as _ae:
+                    st.error(f"AI parse failed: {_ae}")
+                    st.session_state.ai_parsed = None
+
+    # Show what the AI extracted (collapsible)
+    _p = st.session_state.get("ai_parsed")
+    if _p:
+        with st.expander("📋 AI extracted parameters", expanded=True):
+            _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+            _pc1.metric("Symbol",    _p.get("symbol", "—"))
+            _pc2.metric("Pattern",   (_p.get("pattern") or "—")[:22])
+            _pc3.metric("SL pips",   str(_p.get("sl_pips", "—")))
+            _pc4.metric("Direction", _p.get("direction", "—"))
+            if _p.get("notes"):
+                st.info(f"📝 **AI notes:** {_p['notes']}")
+            if st.button("✖ Clear AI parse", key="clear_ai"):
+                st.session_state.ai_parsed = None
+                st.rerun()
+
+    st.divider()
+
+    # ── Pull AI-parsed values as defaults ─────────────────────────────────
+    _ai = st.session_state.get("ai_parsed") or {}
+
+    def _ai_val(key, fallback):
+        v = _ai.get(key)
+        return v if v is not None else fallback
+
+    _periods = ["6mo", "1y", "2y", "3y", "5y"]
+    _tfs      = ["1d", "1wk"]
+    _patterns = list(PATTERN_MAP.keys())
+    _dirs     = ["Both", "Long Only", "Short Only"]
+
+    _def_sym    = _ai_val("symbol",    "GBPJPY=X")
+    _def_period = _ai_val("period",    "2y")
+    _def_tf     = _ai_val("timeframe", "1d")
+    _def_pat    = _ai_val("pattern",   _patterns[0])
+    _def_dir    = _ai_val("direction", "Both")
+    _def_sl     = int(_ai_val("sl_pips",        300))
+    _def_tp     = int(_ai_val("tp_pips",        600) or 600)
+    _def_trail  = bool(_ai_val("trailing_stop", False))
+    _def_trailp = int(_ai_val("trailing_pips",  100))
+    _def_risk   = float(_ai_val("risk_pct",     0.01)) * 100  # to % for slider
+
+    # Clamp to valid choices
+    if _def_period not in _periods: _def_period = "2y"
+    if _def_tf     not in _tfs:     _def_tf     = "1d"
+    if _def_pat    not in _patterns: _def_pat   = _patterns[0]
+    if _def_dir    not in _dirs:    _def_dir    = "Both"
+    _def_risk = max(0.5, min(5.0, _def_risk))
+
     # 1. Symbol
     st.subheader("1. Symbol & Data")
     c1, c2, c3 = st.columns(3)
     bt_sym = c1.text_input(
         "Symbol (yfinance)",
-        value="GBPJPY=X",
+        value=_def_sym,
         help="Forex: GBPJPY=X  EURUSD=X  GBPUSD=X\nGold: GC=F  Oil: CL=F\nCrypto: BTC-USD\nStocks: AAPL",
     )
-    bt_period = c2.selectbox("History", ["6mo", "1y", "2y", "3y", "5y"], index=2)
-    bt_tf     = c3.selectbox("Timeframe", ["1d", "1wk"], index=0)
+    bt_period = c2.selectbox("History", _periods, index=_periods.index(_def_period))
+    bt_tf     = c3.selectbox("Timeframe", _tfs, index=_tfs.index(_def_tf))
     pip_sz    = get_pip_size(bt_sym)
     sym_disp  = bt_sym.replace("=X", "").replace("-", "")
     st.caption(f"Pip size for **{sym_disp}**: `{pip_sz}` "
@@ -993,19 +1201,25 @@ elif page == "📈 Backtest":
     # 2. Pattern
     st.subheader("2. Entry Pattern")
     c1, c2 = st.columns(2)
-    bt_pattern   = c1.selectbox("Pattern", list(PATTERN_MAP.keys()))
-    bt_direction = c2.selectbox("Direction", ["Both", "Long Only", "Short Only"])
+    bt_pattern   = c1.selectbox("Pattern", _patterns,
+                                 index=_patterns.index(_def_pat))
+    bt_direction = c2.selectbox("Direction", _dirs, index=_dirs.index(_def_dir))
     _help = PATTERN_HELP.get(bt_pattern, "")
     if _help:
         st.info(f"ℹ️  {_help}")
 
     # 3. SL / TP
     st.subheader("3. Stop Loss & Take Profit")
+    if _ai and _ai.get("notes") and "profitable close" in _ai.get("notes", "").lower():
+        st.warning(
+            "AI note: This strategy uses a 1st profitable close exit — "
+            "no fixed TP. Set a wide TP (e.g. 2000 pips) or use trailing stop as exit."
+        )
     c1, c2, c3, c4 = st.columns(4)
-    bt_sl   = c1.number_input("Stop Loss (pips)", 1, 5000, 300)
-    bt_tp   = c2.number_input("Take Profit (pips)", 1, 10000, 600)
-    bt_trail  = c3.toggle("Trailing Stop", value=True)
-    bt_trail_p = c4.number_input("Trail distance (pips)", 1, 2000, 150,
+    bt_sl     = c1.number_input("Stop Loss (pips)",       1, 5000,  _def_sl)
+    bt_tp     = c2.number_input("Take Profit (pips)",     1, 10000, _def_tp)
+    bt_trail  = c3.toggle("Trailing Stop", value=_def_trail)
+    bt_trail_p = c4.number_input("Trail distance (pips)", 1, 2000,  _def_trailp,
                                   disabled=not bt_trail)
     rr = bt_tp / bt_sl if bt_sl else 0
     st.caption(
@@ -1018,7 +1232,8 @@ elif page == "📈 Backtest":
     st.subheader("4. Capital & Risk")
     c1, c2 = st.columns(2)
     bt_cap  = c1.number_input("Starting Capital ($)", 1000, 10_000_000, 100_000, step=5_000)
-    bt_risk = c2.slider("Risk per trade (%)", 0.5, 5.0, 1.0, step=0.25) / 100
+    _risk_default = max(0.5, min(5.0, round(_def_risk * 4) / 4))
+    bt_risk = c2.slider("Risk per trade (%)", 0.5, 5.0, _risk_default, step=0.25) / 100
     st.caption(
         f"Risk per trade: **${bt_cap * bt_risk:,.0f}**  |  "
         f"Max gain (TP): +${bt_cap * bt_risk * rr:,.0f}"

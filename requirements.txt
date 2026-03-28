@@ -1,0 +1,8 @@
+streamlit
+plotly
+numpy
+pandas
+yfinance
+pandas-ta
+apscheduler
+anthropic
