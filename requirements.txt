@@ -1,8 +1,8 @@
-streamlit
-plotly
-numpy
-pandas
-yfinance
-pandas-ta
-apscheduler
-anthropic
+streamlit==1.32.0
+plotly==5.19.0
+numpy==1.26.4
+pandas==2.2.1
+yfinance==0.2.37
+pandas_ta==0.3.14b
+APScheduler==3.10.4
+anthropic==0.23.1
