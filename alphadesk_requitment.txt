@@ -1,6 +1,6 @@
 streamlit
+plotly
 yfinance
 pandas-ta
-plotly
 apscheduler
 anthropic
