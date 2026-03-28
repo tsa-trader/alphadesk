@@ -3,6 +3,6 @@ plotly
 numpy
 pandas
 yfinance
-pandas_ta
-APScheduler
+pandas-ta
+apscheduler
 anthropic
