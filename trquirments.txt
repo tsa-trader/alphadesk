@@ -1,0 +1,8 @@
+streamlit>=1.28.0
+plotly>=5.0.0
+yfinance>=0.2.0
+pandas-ta>=0.3.14b
+pandas>=2.0.0
+numpy>=1.24.0
+apscheduler>=3.10.0
+anthropic>=0.20.0
