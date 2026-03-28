@@ -905,7 +905,7 @@ with st.sidebar:
         st.caption(f"⚡ Every {st.session_state.interval_min} min")
 
     st.divider()
-    if st.button("🔄 Manual cycle", use_container_width=True):
+    if st.button("🔄 Manual cycle", width='stretch'):
         orch = PortfolioOrchestrator(st.session_state.risk_config, st.session_state.bridge)
         with st.spinner("Running agents..."):
             orch.run_all()
@@ -952,7 +952,7 @@ if page == "📊 Overview":
         fig.update_layout(**DARK_LAYOUT, height=260,
                           xaxis=dict(showgrid=False),
                           yaxis=dict(showgrid=True, gridcolor="#1e2a1e"))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     with cr:
         st.subheader("Live Signals")
@@ -969,7 +969,7 @@ if page == "📊 Overview":
                         "OK":     "✅" if _res.get("approved") else "❌",
                     })
         if _sigs:
-            st.dataframe(pd.DataFrame(_sigs), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(_sigs), width='stretch', hide_index=True)
         else:
             st.info("No signals yet — run a cycle.")
 
@@ -1107,7 +1107,7 @@ elif page == "📈 Backtest":
         _do_parse = st.button(
             "🤖 Parse with AI",
             type="primary",
-            use_container_width=True,
+            width='stretch',
             disabled=not (st.session_state.anthropic_api_key and _strategy_text.strip()),
         )
         if not st.session_state.anthropic_api_key:
@@ -1238,7 +1238,7 @@ elif page == "📈 Backtest":
     )
 
     st.divider()
-    run_bt = st.button("▶  Run Backtest", type="primary", use_container_width=True)
+    run_bt = st.button("▶  Run Backtest", type="primary", width='stretch')
 
     if run_bt:
         # Download
@@ -1350,7 +1350,7 @@ elif page == "📈 Backtest":
             ))
         fig.update_layout(**DARK_LAYOUT, height=320,
                           legend=dict(orientation="h", yanchor="bottom", y=1.02))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         # Drawdown
         st.subheader("Drawdown")
@@ -1361,7 +1361,7 @@ elif page == "📈 Backtest":
             line=dict(color="#ff4d6a", width=1), name="Drawdown %",
         ))
         fig2.update_layout(**DARK_LAYOUT, height=160)
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
         # Monthly heatmap
         st.subheader("Monthly P&L Heatmap")
@@ -1384,7 +1384,7 @@ elif page == "📈 Backtest":
             ))
             fig3.update_layout(**DARK_LAYOUT,
                                height=max(120, len(pivot) * 45 + 60))
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width='stretch')
 
         # Trade log
         st.subheader("Trade Log")
@@ -1392,7 +1392,7 @@ elif page == "📈 Backtest":
         st.dataframe(disp.style.applymap(
             lambda v: f"color: {'#00d4aa' if v > 0 else '#ff4d6a'}",
             subset=["P&L ($)", "Pips"],
-        ), use_container_width=True, height=280)
+        ), width='stretch', height=280)
 
         # Approve & Deploy
         st.divider()
@@ -1409,7 +1409,7 @@ Result: **{ret_pct:+.1f}%** · **{wr:.0f}%** win · **{pf:.2f}** PF · **{max_dd
         with _cb:
             st.write("")
             st.write("")
-            if st.button("✅ Approve & Deploy", type="primary", use_container_width=True):
+            if st.button("✅ Approve & Deploy", type="primary", width='stretch'):
                 _ap_strat = {
                     "pattern":    bt_pattern, "symbol":    sym_disp,
                     "timeframe":  bt_tf,      "direction": bt_direction,
@@ -1565,7 +1565,7 @@ elif page == "🛡️ Risk":
         _fg.update_layout(template="plotly_dark", height=220,
                           margin=dict(l=20, r=20, t=40, b=10),
                           paper_bgcolor="rgba(0,0,0,0)")
-        st.plotly_chart(_fg, use_container_width=True)
+        st.plotly_chart(_fg, width='stretch')
 
         for _lbl, _val, _tot in [
             ("Portfolio Exposure", 38.0, 100),
